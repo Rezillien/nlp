@@ -17,7 +17,7 @@ for f in $(echo *.txt); do
             mv tmp3 tmp2
             echo $line
             line=$( echo $line | perl -pe 's/ +/ /g')
-            echo -n "$(echo $line | pcre2grep -io '\d{4}(\.?) *r/b'). " >> out1/$f.out
+            echo -n "$(echo $line | pcre2grep -io '(\d{4}[ \.]? *r\b)'). " >> out1/$f.out
             echo -n      "$(echo $line | pcre2grep -io '(?<=\d{4})(.*?)(?=\(Dz)' | sed 's/r\.? *//') " >> out1/$f.out
             echo -n "$(echo $line | pcre2grep -io '(?<=\(Dz)(.*?)(?=\d{4})' | perl -pe 's/(.*)r\.? */\1/') " >> out1/$f.out
             echo "$(echo $line | pcre2grep -io '\( *dz(.*?)\)') " >> out1/$f.out
