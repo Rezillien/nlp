@@ -3,7 +3,11 @@ package main
 import (
 	"bytes"
 	"io/ioutil"
+	"math"
 	"net/http"
+	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 )
@@ -19,6 +23,16 @@ type token struct {
 type bigram struct {
 	first token
 	second token
+}
+
+type bigramKey struct {
+	first string
+	second string
+}
+
+type llrStatistic struct {
+	bgram bigramKey
+	value float64
 }
 
 func check(e error) {
@@ -42,8 +56,8 @@ func callTokenizer(c chan string, data []byte){
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(data))
 	check(err)
 	client := &http.Client{}
-	resp, _ := client.Do(req)
-	//check(err) problem with tokenizer
+	resp, err := client.Do(req)
+	check(err) //problem with tokenizer
 	body, _ := ioutil.ReadAll(resp.Body)
 	c <- string(body)
 }
@@ -57,12 +71,10 @@ func loadCorpus() []string{
 	for _, f := range files {
 		dat, err := ioutil.ReadFile("../ustawy/"+f.Name())
 		check(err)
-		processCount++
 		go callTokenizer(response, dat)
-	}
-	for ;processCount>0;processCount-- {
-		println(processCount)
-		corpus[processCount-1]=<-response
+		println(f.Name())
+		corpus[processCount]=<-response
+		processCount++
 	}
 	return corpus
 }
@@ -120,15 +132,118 @@ func filterBigrams(bigrams []bigram) []bigram {
 	return filteredBigrams
 }
 
+func filterTokens(tokens []token) []token {
+	filteredTokens := make([]token, 0)
+	for i := range tokens {
+		if !IsLetter(tokens[i].basic) {
+			continue
+		} else {
+			filteredTokens = append(filteredTokens, tokens[i])
+		}
+	}
+	return filteredTokens
+}
+
+func createBigramKey(bgram bigram) bigramKey {
+	var bgramKey bigramKey
+	bgramKey.first = bgram.first.basic+":"+strings.Split(bgram.first.tags,":")[0]
+	bgramKey.second = bgram.second.basic+":"+strings.Split(bgram.second.tags,":")[0]
+	return bgramKey
+}
+
+func createBigramMap(bigrams []bigram) map[bigramKey]int {
+	bigramDict := make(map[bigramKey]int)
+	for i := range bigrams {
+		bigramDict[createBigramKey(bigrams[i])]++
+	}
+	return bigramDict
+}
+
+func createTokenMap(tokens []token) map[string]int {
+	tokenDict := make(map[string]int)
+	for i := range tokens {
+		tokenDict[tokens[i].basic+":"+strings.Split(tokens[i].tags,":")[0]]++
+	}
+	return tokenDict
+}
+
+func ex5(statistics []llrStatistic) []llrStatistic {
+	output := make([]llrStatistic, 0)
+	for i := range statistics {
+		if strings.Split(statistics[i].bgram.first,":")[1] == "subst" && (strings.Split(statistics[i].bgram.second,":")[1] == "subst" || strings.Split(statistics[i].bgram.second,":")[1] == "adj") {
+			output = append(output, statistics[i])
+		}
+	}
+	return output
+}
+
 func main() {
-	print(IsLetter("."))
+	f, err := os.Create("results")
+	check(err)
+	defer f.Close()
 	corpus := loadCorpus()
 	parsedTokens := parseCorpus(corpus)
 	bigrams := createBigrams(parsedTokens)
 	filteredBigrams := filterBigrams(bigrams)
-
-	println(len(parsedTokens))
-	println(len(bigrams))
-	println(len(filteredBigrams))
+	bigramsMap := createBigramMap(filteredBigrams)
+	filteredTokens := filterTokens(parsedTokens)
+	tokensMap := createTokenMap(filteredTokens)
+	statistics := llr(bigramsMap, tokensMap, len(filteredBigrams), len(filteredTokens))
+	//println(statistics)
+	sort.Slice(statistics,func(i, j int) bool {return statistics[i].value > statistics[j].value})
+	output := ex5(statistics)
+	for i:=1;i<50;i++ {
+		_, err = f.WriteString(strconv.Itoa(i) + " " + output[i].bgram.first + " " + output[i].bgram.second + " " + strconv.FormatFloat(output[i].value, 'f', 6, 64) + "\n")
+		check(err)
+	}
+	//for key, value := range bigramsMap {
+	//	println(key.first + " " + key.second + " " + strconv.Itoa(value))
+	//}
+	//println(len(parsedTokens))
+	//println(len(bigrams))
+	//println(len(filteredBigrams))
 	//println(corpus[2])
+}
+
+func llr(bigrams map[bigramKey]int, tokens map[string]int, bigramCount int, tokenCount int) []llrStatistic{
+	statistics := make([]llrStatistic, 0)
+	for key, value := range bigrams {
+		pairs := value
+		w1notw2 := tokens[key.first] - value
+		w2notw1 := tokens[key.second] - value
+		notw1notw2 := tokenCount - tokens[key.first] - tokens[key.second]
+		llrvalue := 2 * float64(pairs + w1notw2 + w2notw1 + notw1notw2) * (h([]int{pairs, w1notw2, w2notw1, notw1notw2}) - h([]int{pairs + w2notw1, w1notw2 + notw1notw2}) - h([]int{pairs + w1notw2, w2notw1 + notw1notw2}))
+		statistics = append(statistics, llrStatistic{key, llrvalue})
+	}
+	return statistics
+}
+
+func h(values []int) float64 {
+	N := sum(values)
+	v := make([]float64, 0)
+	for i := range values {
+		denominator :=0
+		if values[i] == 0 {
+			denominator = 1
+		}
+		comp := float64(values[i])/float64(N)*math.Log2(float64(values[i])/float64(N)+float64(denominator))
+		v = append(v, comp)
+	}
+	return sumFloat(v)
+}
+
+func sum(arr []int) int {
+	sum := 0
+	for i := range arr {
+		sum += arr[i]
+	}
+	return sum
+}
+
+func sumFloat(arr []float64) float64 {
+	sum := float64(0)
+	for i := range arr {
+		sum += arr[i]
+	}
+	return sum
 }
